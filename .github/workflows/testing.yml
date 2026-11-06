@@ -1,78 +1,101 @@
 name: Testing
 
-on: [push, pull_request]
+on:  # yamllint disable-line rule:truthy
+  push:
+    branches:
+      - master
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"  # Everyday at 6:00am UTC/10:00pm PST
+
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ startsWith(github.ref, 'refs/pull/') || github.run_number }}  # yamllint disable-line
+  # Only cancel intermediate builds if on a PR:
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    outputs:
+      triggered: ${{ steps.check.outputs.triggered }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "triggered=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            BASE=${{ github.event.before }}
+          else
+            BASE=${{ github.event.pull_request.base.sha }}
+          fi
+
+          PATHS=(
+            'torch_geometric/'
+            'test/'
+            'pyproject.toml'
+            'codecov.yml'
+            '.github/actions/setup/action.yml'
+            '.github/workflows/testing.yml'
+            '.github/workflows/_testing.yml'
+          )
+
+          CHANGED=$(git diff --name-only "$BASE" HEAD)
+          for path in "${PATHS[@]}"; do
+            if echo "$CHANGED" | grep -q "^${path}"; then
+              echo "triggered=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          echo "triggered=false" >> "$GITHUB_OUTPUT"
 
   pytest:
-    runs-on: ${{ matrix.os }}
+    needs: trigger
+    # Skip the regular test suite when `ci: full` is set; `pytest-full` runs
+    # the full matrix instead:
+    if: "${{ needs.trigger.outputs.triggered == 'true' && github.repository == 'pyg-team/pytorch_geometric' && github.event_name != 'schedule' && !contains(github.event.pull_request.labels.*.name, 'ci: full') }}"
+    uses: ./.github/workflows/_testing.yml
+    with:
+      test-matrix: |
+        { include: [
+          { "os": "ubuntu-22.04", "python-version": "3.10", "torch-version": "nightly", "cuda-version": "cpu" },
+          { "os": "ubuntu-22.04", "python-version": "3.10", "torch-version": "2.12.0", "cuda-version": "cpu" },
+          { "os": "ubuntu-22.04", "python-version": "3.10", "torch-version": "2.11.0", "cuda-version": "cpu" },
+          { "os": "ubuntu-22.04", "python-version": "3.10", "torch-version": "2.10.0", "cuda-version": "cpu" },
+        ]}
 
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: [3.6, 3.9]
-        torch-version: [1.8.0, 1.9.0]
-        include:
-          - torch-version: 1.8.0
-            torchvision-version: 0.9.0
-          - torch-version: 1.9.0
-            torchvision-version: 0.10.0
+  pytest-full:
+    # Run on the nightly schedule, or on demand for PRs labeled `ci: full`:
+    if: "${{ github.repository == 'pyg-team/pytorch_geometric' && (github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'ci: full')) }}"
+    uses: ./.github/workflows/_testing.yml
+    with:
+      test-matrix: |
+        {
+          "os": ["ubuntu-22.04", "macos-14", "windows-2022"],
+          "python-version": ["3.10"],
+          "torch-version": ["2.10.0", "2.11.0", "2.12.0", "nightly"],
+          "cuda-version": ["cpu"],
+          "full_test": ["1"]
+        }
 
+  status:
+    if: always() && github.event_name == 'pull_request'
+    needs:
+      - pytest
+      - pytest-full
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Get pip cache
-        id: pip-cache
-        run: |
-          python -c "from pip._internal.locations import USER_CACHE_DIR; print('::set-output name=dir::' + USER_CACHE_DIR)"
-
-      - name: Cache pip
-        uses: actions/cache@v2
-        with:
-          path: ${{ steps.pip-cache.outputs.dir }}
-          key: ${{ runner.os }}-pip-py${{ matrix.python-version }}-torch==${{ matrix.torch-version }}
-
-      - name: Install PyTorch ${{ matrix.torch-version }}+cpu
-        run: |
-          pip install torch==${{ matrix.torch-version}}+cpu torchvision==${{ matrix.torchvision-version}}+cpu -f https://download.pytorch.org/whl/torch_stable.html
-
-      - name: Install internal dependencies
-        run: |
-          pip install torch-scatter -f https://pytorch-geometric.com/whl/torch-${{ matrix.torch-version }}+cpu.html
-          pip install torch-sparse -f https://pytorch-geometric.com/whl/torch-${{ matrix.torch-version }}+cpu.html
-          pip install torch-cluster -f https://pytorch-geometric.com/whl/torch-${{ matrix.torch-version }}+cpu.html
-          pip install torch-spline-conv -f https://pytorch-geometric.com/whl/torch-${{ matrix.torch-version }}+cpu.html
-
-      - name: Install optional dependencies
-        run: |
-          pip install cython
-          pip install scikit-image
-          pip install trimesh
-          pip install pandas
-          pip install h5py
-          pip install numba
-          pip install git+https://github.com/the-virtual-brain/tvb-geodesic.git
-
-      - name: Install main package
-        run: |
-          pip install -e .[test]
-
-      - name: Run test-suite
-        run: |
-          python setup.py test
-
-      - name: Generate coverage report
-        if: success()
-        run: |
-          pip install coverage
-          coverage xml
-
-      - name: Upload coverage report to codecov
-        uses: codecov/codecov-action@v1
-        if: success()
-        with:
-          file: coverage.xml
+      - run: |
+          if [ "${{ needs.pytest.result }}" = "failure" ] || \
+             [ "${{ needs.pytest-full.result }}" = "failure" ] || \
+             [ "${{ needs.pytest.result }}" = "cancelled" ] || \
+             [ "${{ needs.pytest-full.result }}" = "cancelled" ]; then
+            exit 1
+          fi

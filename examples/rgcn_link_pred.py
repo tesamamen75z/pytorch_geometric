@@ -7,24 +7,27 @@ Caution: This script is executed in a full-batch fashion, and therefore needs
 to run on CPU (following the experimental setup in the official paper).
 """
 import os.path as osp
-from tqdm import tqdm
+import time
 
 import torch
 import torch.nn.functional as F
 from torch.nn import Parameter
+from tqdm import tqdm
 
-from torch_geometric.nn import GAE, RGCNConv
 from torch_geometric.datasets import RelLinkPredDataset
+from torch_geometric.nn import GAE, RGCNConv
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'RLPD')
 dataset = RelLinkPredDataset(path, 'FB15k-237')
-data = dataset[0]
+data = dataset[0].to(device)
 
 
 class RGCNEncoder(torch.nn.Module):
     def __init__(self, num_nodes, hidden_channels, num_relations):
         super().__init__()
-        self.node_emb = Parameter(torch.Tensor(num_nodes, hidden_channels))
+        self.node_emb = Parameter(torch.empty(num_nodes, hidden_channels))
         self.conv1 = RGCNConv(hidden_channels, hidden_channels, num_relations,
                               num_blocks=5)
         self.conv2 = RGCNConv(hidden_channels, hidden_channels, num_relations,
@@ -47,7 +50,7 @@ class RGCNEncoder(torch.nn.Module):
 class DistMultDecoder(torch.nn.Module):
     def __init__(self, num_relations, hidden_channels):
         super().__init__()
-        self.rel_emb = Parameter(torch.Tensor(num_relations, hidden_channels))
+        self.rel_emb = Parameter(torch.empty(num_relations, hidden_channels))
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -60,10 +63,10 @@ class DistMultDecoder(torch.nn.Module):
 
 
 model = GAE(
-    RGCNEncoder(data.num_nodes, hidden_channels=500,
-                num_relations=dataset.num_relations),
-    DistMultDecoder(dataset.num_relations // 2, hidden_channels=500),
-)
+    RGCNEncoder(data.num_nodes, 500, dataset.num_relations),
+    DistMultDecoder(dataset.num_relations // 2, 500),
+).to(device)
+
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
 
@@ -73,8 +76,10 @@ def negative_sampling(edge_index, num_nodes):
     mask_2 = ~mask_1
 
     neg_edge_index = edge_index.clone()
-    neg_edge_index[0, mask_1] = torch.randint(num_nodes, (mask_1.sum(), ))
-    neg_edge_index[1, mask_2] = torch.randint(num_nodes, (mask_2.sum(), ))
+    neg_edge_index[0, mask_1] = torch.randint(num_nodes, (mask_1.sum(), ),
+                                              device=neg_edge_index.device)
+    neg_edge_index[1, mask_2] = torch.randint(num_nodes, (mask_2.sum(), ),
+                                              device=neg_edge_index.device)
     return neg_edge_index
 
 
@@ -90,7 +95,7 @@ def train():
     neg_out = model.decode(z, neg_edge_index, data.train_edge_type)
 
     out = torch.cat([pos_out, neg_out])
-    gt = torch.cat([torch.ones_like(pos_out), torch.ones_like(neg_out)])
+    gt = torch.cat([torch.ones_like(pos_out), torch.zeros_like(neg_out)])
     cross_entropy_loss = F.binary_cross_entropy_with_logits(out, gt)
     reg_loss = z.pow(2).mean() + model.decoder.rel_emb.pow(2).mean()
     loss = cross_entropy_loss + 1e-2 * reg_loss
@@ -114,6 +119,16 @@ def test():
 
 
 @torch.no_grad()
+def compute_rank(ranks):
+    # fair ranking prediction as the average
+    # of optimistic and pessimistic ranking
+    true = ranks[0]
+    optimistic = (ranks > true).sum() + 1
+    pessimistic = (ranks >= true).sum()
+    return (optimistic + pessimistic).float() * 0.5
+
+
+@torch.no_grad()
 def compute_mrr(z, edge_index, edge_type):
     ranks = []
     for i in tqdm(range(edge_type.numel())):
@@ -121,12 +136,12 @@ def compute_mrr(z, edge_index, edge_type):
 
         # Try all nodes as tails, but delete true triplets:
         tail_mask = torch.ones(data.num_nodes, dtype=torch.bool)
-        for (head, tail), edge_type in [
+        for (heads, tails), types in [
             (data.train_edge_index, data.train_edge_type),
             (data.valid_edge_index, data.valid_edge_type),
             (data.test_edge_index, data.test_edge_type),
         ]:
-            tail_mask[tail[(head == src) & (edge_type == rel)]] = False
+            tail_mask[tails[(heads == src) & (types == rel)]] = False
 
         tail = torch.arange(data.num_nodes)[tail_mask]
         tail = torch.cat([torch.tensor([dst]), tail])
@@ -135,18 +150,17 @@ def compute_mrr(z, edge_index, edge_type):
         eval_edge_type = torch.full_like(tail, fill_value=rel)
 
         out = model.decode(z, eval_edge_index, eval_edge_type)
-        perm = out.argsort(descending=True)
-        rank = int((perm == 0).nonzero(as_tuple=False).view(-1)[0])
-        ranks.append(rank + 1)
+        rank = compute_rank(out)
+        ranks.append(rank)
 
         # Try all nodes as heads, but delete true triplets:
         head_mask = torch.ones(data.num_nodes, dtype=torch.bool)
-        for (head, tail), edge_type in [
+        for (heads, tails), types in [
             (data.train_edge_index, data.train_edge_type),
             (data.valid_edge_index, data.valid_edge_type),
             (data.test_edge_index, data.test_edge_type),
         ]:
-            head_mask[head[(tail == dst) & (edge_type == rel)]] = False
+            head_mask[heads[(tails == dst) & (types == rel)]] = False
 
         head = torch.arange(data.num_nodes)[head_mask]
         head = torch.cat([torch.tensor([src]), head])
@@ -155,16 +169,19 @@ def compute_mrr(z, edge_index, edge_type):
         eval_edge_type = torch.full_like(head, fill_value=rel)
 
         out = model.decode(z, eval_edge_index, eval_edge_type)
-        perm = out.argsort(descending=True)
-        rank = int((perm == 0).nonzero(as_tuple=False).view(-1)[0])
-        ranks.append(rank + 1)
+        rank = compute_rank(out)
+        ranks.append(rank)
 
     return (1. / torch.tensor(ranks, dtype=torch.float)).mean()
 
 
+times = []
 for epoch in range(1, 10001):
+    start = time.time()
     loss = train()
     print(f'Epoch: {epoch:05d}, Loss: {loss:.4f}')
-    if (epoch % 100) == 0:
+    if (epoch % 500) == 0:
         valid_mrr, test_mrr = test()
         print(f'Val MRR: {valid_mrr:.4f}, Test MRR: {test_mrr:.4f}')
+    times.append(time.time() - start)
+print(f"Median time per epoch: {torch.tensor(times).median():.4f}s")

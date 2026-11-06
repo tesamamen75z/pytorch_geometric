@@ -1,15 +1,16 @@
 import torch
 import torch.nn.functional as F
 from torch.nn import Linear
-from torch_geometric.nn import GCNConv, global_mean_pool, JumpingKnowledge
+
+from torch_geometric.nn import GCNConv, JumpingKnowledge, global_mean_pool
 
 
 class GCN(torch.nn.Module):
     def __init__(self, dataset, num_layers, hidden):
-        super(GCN, self).__init__()
+        super().__init__()
         self.conv1 = GCNConv(dataset.num_features, hidden)
         self.convs = torch.nn.ModuleList()
-        for i in range(num_layers - 1):
+        for _ in range(num_layers - 1):
             self.convs.append(GCNConv(hidden, hidden))
         self.lin1 = Linear(hidden, hidden)
         self.lin2 = Linear(hidden, dataset.num_classes)
@@ -38,10 +39,10 @@ class GCN(torch.nn.Module):
 
 class GCNWithJK(torch.nn.Module):
     def __init__(self, dataset, num_layers, hidden, mode='cat'):
-        super(GCNWithJK, self).__init__()
+        super().__init__()
         self.conv1 = GCNConv(dataset.num_features, hidden)
         self.convs = torch.nn.ModuleList()
-        for i in range(num_layers - 1):
+        for _ in range(num_layers - 1):
             self.convs.append(GCNConv(hidden, hidden))
         self.jump = JumpingKnowledge(mode)
         if mode == 'cat':

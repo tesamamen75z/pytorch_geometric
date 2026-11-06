@@ -1,44 +1,79 @@
-:github_url: https://github.com/rusty1s/pytorch_geometric
+:github_url: https://github.com/pyg-team/pytorch_geometric
 
-PyTorch Geometric Documentation
-===============================
+PyG Documentation
+=================
 
-PyTorch Geometric is a geometric deep learning extension library for `PyTorch <https://pytorch.org/>`_.
+:pyg:`null` **PyG** *(PyTorch Geometric)* is a library built upon :pytorch:`null` `PyTorch <https://pytorch.org>`_ to easily write and train Graph Neural Networks (GNNs) for a wide range of applications related to structured data.
 
 It consists of various methods for deep learning on graphs and other irregular structures, also known as `geometric deep learning <http://geometricdeeplearning.com/>`_, from a variety of published papers.
-In addition, it consists of an easy-to-use mini-batch loader for many small and single giant graphs, a large number of common benchmark datasets (based on simple interfaces to create your own), and helpful transforms, both for learning on arbitrary graphs as well as on 3D meshes or point clouds.
+In addition, it consists of easy-to-use mini-batch loaders for operating on many small and single giant graphs, `multi GPU-support <https://github.com/pyg-team/pytorch_geometric/tree/master/examples/multi_gpu>`_, `torch.compile <https://pytorch-geometric.readthedocs.io/en/latest/advanced/compile.html>`_ support, `DataPipe <https://github.com/pyg-team/pytorch_geometric/blob/master/examples/datapipe.py>`_ support, a large number of common benchmark datasets (based on simple interfaces to create your own), and helpful transforms, both for learning on arbitrary graphs as well as on 3D meshes or point clouds.
+
+.. slack_button::
 
 .. toctree::
-   :glob:
    :maxdepth: 1
-   :caption: Notes
+   :caption: Install PyG
 
-   notes/installation
-   notes/introduction
-   notes/create_gnn
-   notes/create_dataset
-   notes/batching
-   notes/sparse_tensor
-   notes/jit
-   notes/cheatsheet
-   notes/colabs
-   notes/resources
+   install/installation
 
 .. toctree::
-   :glob:
+   :maxdepth: 1
+   :caption: Get Started
+
+   get_started/introduction
+   get_started/colabs
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Tutorials
+
+   tutorial/gnn_design
+   tutorial/dataset
+   tutorial/application
+   tutorial/distributed
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Advanced Concepts
+
+   advanced/batching
+   advanced/sparse_tensor
+   advanced/hgam
+   advanced/compile
+   advanced/jit
+   advanced/remote
+   advanced/graphgym
+   advanced/cpu_affinity
+
+.. toctree::
    :maxdepth: 1
    :caption: Package Reference
 
    modules/root
    modules/nn
    modules/data
+   modules/loader
+   modules/sampler
    modules/datasets
+   modules/llm
    modules/transforms
    modules/utils
-   modules/io
+   modules/explain
+   modules/metrics
+   modules/distributed
+   modules/contrib
+   modules/graphgym
+   modules/profile
 
-Indices and Tables
-==================
+.. toctree::
+   :maxdepth: 1
+   :caption: Cheatsheets
 
-* :ref:`genindex`
-* :ref:`modindex`
+   cheatsheet/gnn_cheatsheet
+   cheatsheet/data_cheatsheet
+
+.. toctree::
+   :maxdepth: 1
+   :caption: External Resources
+
+   external/resources

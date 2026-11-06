@@ -3,12 +3,13 @@ from math import ceil
 import torch
 import torch.nn.functional as F
 from torch.nn import Linear
-from torch_geometric.nn import DenseSAGEConv, dense_diff_pool, JumpingKnowledge
+
+from torch_geometric.nn import DenseSAGEConv, JumpingKnowledge, dense_diff_pool
 
 
 class Block(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, mode='cat'):
-        super(Block, self).__init__()
+        super().__init__()
 
         self.conv1 = DenseSAGEConv(in_channels, hidden_channels)
         self.conv2 = DenseSAGEConv(hidden_channels, out_channels)
@@ -31,7 +32,7 @@ class Block(torch.nn.Module):
 
 class DiffPool(torch.nn.Module):
     def __init__(self, dataset, num_layers, hidden, ratio=0.25):
-        super(DiffPool, self).__init__()
+        super().__init__()
 
         num_nodes = ceil(ratio * dataset[0].num_nodes)
         self.embed_block1 = Block(dataset.num_features, hidden, hidden)
@@ -39,7 +40,7 @@ class DiffPool(torch.nn.Module):
 
         self.embed_blocks = torch.nn.ModuleList()
         self.pool_blocks = torch.nn.ModuleList()
-        for i in range((num_layers // 2) - 1):
+        for _ in range((num_layers // 2) - 1):
             num_nodes = ceil(ratio * num_nodes)
             self.embed_blocks.append(Block(hidden, hidden, hidden))
             self.pool_blocks.append(Block(hidden, hidden, num_nodes))

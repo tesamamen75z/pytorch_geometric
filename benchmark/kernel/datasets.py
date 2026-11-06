@@ -1,12 +1,13 @@
 import os.path as osp
 
 import torch
+
+import torch_geometric.transforms as T
 from torch_geometric.datasets import TUDataset
 from torch_geometric.utils import degree
-import torch_geometric.transforms as T
 
 
-class NormalizedDegree(object):
+class NormalizedDegree:
     def __init__(self, mean, std):
         self.mean = mean
         self.std = std
@@ -53,7 +54,7 @@ def get_dataset(name, sparse=True, cleaned=False):
         for i, data in enumerate(dataset):
             if data.num_nodes <= num_nodes:
                 indices.append(i)
-        dataset = dataset[torch.tensor(indices)]
+        dataset = dataset.copy(torch.tensor(indices))
 
         if dataset.transform is None:
             dataset.transform = T.ToDense(num_nodes)

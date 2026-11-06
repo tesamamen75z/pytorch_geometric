@@ -1,13 +1,15 @@
+from typing import Optional
+
 import torch
 from torch import Tensor
-from torch.nn import Linear, BatchNorm1d
+from torch.nn import BatchNorm1d, Linear
 
 
 class DiffGroupNorm(torch.nn.Module):
     r"""The differentiable group normalization layer from the `"Towards Deeper
     Graph Neural Networks with Differentiable Group Normalization"
     <https://arxiv.org/abs/2006.06972>`_ paper, which normalizes node features
-    group-wise via a learnable soft cluster assignment
+    group-wise via a learnable soft cluster assignment.
 
     .. math::
 
@@ -39,27 +41,43 @@ class DiffGroupNorm(torch.nn.Module):
             :obj:`False`, this module does not track such statistics and always
             uses batch statistics in both training and eval modes.
             (default: :obj:`True`)
+        device (torch.device, optional): The device to use for the module.
+            (default: :obj:`None`)
     """
-    def __init__(self, in_channels, groups, lamda=0.01, eps=1e-5, momentum=0.1,
-                 affine=True, track_running_stats=True):
-        super(DiffGroupNorm, self).__init__()
+    def __init__(
+        self,
+        in_channels: int,
+        groups: int,
+        lamda: float = 0.01,
+        eps: float = 1e-5,
+        momentum: float = 0.1,
+        affine: bool = True,
+        track_running_stats: bool = True,
+        device: Optional[torch.device] = None,
+    ):
+        super().__init__()
 
         self.in_channels = in_channels
         self.groups = groups
         self.lamda = lamda
 
-        self.lin = Linear(in_channels, groups, bias=False)
+        self.lin = Linear(in_channels, groups, bias=False, device=device)
         self.norm = BatchNorm1d(groups * in_channels, eps, momentum, affine,
-                                track_running_stats)
+                                track_running_stats, device=device)
 
         self.reset_parameters()
 
     def reset_parameters(self):
+        r"""Resets all learnable parameters of the module."""
         self.lin.reset_parameters()
         self.norm.reset_parameters()
 
     def forward(self, x: Tensor) -> Tensor:
-        """"""
+        r"""Forward pass.
+
+        Args:
+            x (torch.Tensor): The source tensor.
+        """
         F, G = self.in_channels, self.groups
 
         s = self.lin(x).softmax(dim=-1)  # [N, G]
@@ -71,7 +89,7 @@ class DiffGroupNorm(torch.nn.Module):
     @staticmethod
     def group_distance_ratio(x: Tensor, y: Tensor, eps: float = 1e-5) -> float:
         r"""Measures the ratio of inter-group distance over intra-group
-        distance
+        distance.
 
         .. math::
             R_{\text{Group}} = \frac{\frac{1}{(C-1)^2} \sum_{i!=j}
@@ -104,6 +122,6 @@ class DiffGroupNorm(torch.nn.Module):
 
         return numerator / (denominator + eps)
 
-    def __repr__(self):
-        return '{}({}, groups={})'.format(self.__class__.__name__,
-                                          self.in_channels, self.groups)
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'groups={self.groups})')
